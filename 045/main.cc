@@ -1,10 +1,12 @@
-#include <algorithm>
 #include <cassert>
 #include <compare>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
 #include <iterator>
 #include <ostream>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace tbrekalo {
@@ -48,6 +50,15 @@ struct SpatialId {
       -> std::strong_ordering = default;
 };
 
+struct SpatialIdHash {
+  constexpr auto operator()(SpatialId id) const noexcept {
+    return (id.x << 5) + id.x + id.y;
+  }
+};
+
+using SpatialMap =
+    std::unordered_map<SpatialId, std::unordered_set<int>, SpatialIdHash>;
+
 auto LoadProblem(std::istream& istrm) -> Problem {
   Problem dst{};
 
@@ -75,10 +86,9 @@ auto LoadProblem(std::istream& istrm) -> Problem {
 auto PrintSolution(std::ostream& ostrm, std::vector<Group> const& groups) {
   ostrm << "!\n";
   for (auto const& [members, roads] : groups) {
-    for (auto it : members) {
-      ostrm << it << ' ';
+    for (auto it = members.begin(); it != members.end(); ++it) {
+      ostrm << *it << (std::next(it) != members.end() ? ' ' : '\n');
     }
-    ostrm << '\n';
     for (auto [a, b] : roads) {
       ostrm << a << ' ' << b << '\n';
     }
@@ -106,26 +116,50 @@ auto BoxSpatialId(int block_length, Box box) -> SpatialId {
   };
 }
 
+auto ExpandFrontier(std::vector<std::vector<char>> const& visited, SpatialId id)
+    -> std::vector<SpatialId> {
+  std::vector<SpatialId> dst;
+  auto const max_id = visited.size();
+  for (int dx = -1; dx <= 1; ++dx) {
+    for (int dy = -1; dy <= 1; ++dy) {
+      int x = id.x + dx;
+      int y = id.y + dy;
+      if (dx == 0 && dy == 0 || x < 0 || x >= max_id || y < 0 || y >= max_id ||
+          visited[x][y]) {
+        continue;
+      }
+    }
+  }
+  return dst;
+}
+
 auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
     -> std::vector<Group> {
+  int const block_length = kBlockLength;
+  int const n_blocks = kMaxXY / block_length + 1;
+
   std::vector<Group> groups(problem.m);
-  std::vector<int> spatial_nodes(problem.n);
-  for (int i = 0; i < spatial_nodes.size(); ++i) {
-    spatial_nodes[i] = i;
+  for (int i = 0; i < groups.size(); ++i) {
+    groups[i].members.reserve(problem.group_sizes[i]);
   }
 
-  std::sort(spatial_nodes.begin(), spatial_nodes.end(),
-            [&boxes = problem.boxes](int a, int b) -> bool {
-              return BoxSpatialId(kBlockLength, boxes[a]) <
-                     BoxSpatialId(kBlockLength, boxes[b]);
-            });
+  std::unordered_set<int> ungrouped;
+  std::vector<std::vector<std::vector<int>>> areas(
+      n_blocks, std::vector<std::vector<int>>(n_blocks));
+  std::vector<std::vector<char>> visited(n_blocks,
+                                         std::vector<char>(n_blocks, 0));
 
-  for (int i = 0, j = 0, k = 0; i < problem.n; ++i) {
-    groups[j].members.push_back(spatial_nodes[i]);
-    if (++k == problem.group_sizes[j]) {
-      k = 0;
-      ++j;
-    }
+  for (int i = 0; i < problem.n; ++i) {
+    auto [x, y] = BoxSpatialId(kBlockLength, problem.boxes[i]);
+    assert(x < n_blocks);
+    assert(y < n_blocks);
+
+    areas[x][y].push_back(i);
+    ungrouped.insert(i);
+  }
+
+  std::vector<SpatialId> stack{SpatialId{.x = n_blocks / 2, .y = n_blocks / 2}};
+  for (int g_id = 0; g_id < problem.m;) {
   }
 
   for (int i = 0; i < problem.m; ++i) {
