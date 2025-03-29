@@ -1,7 +1,7 @@
+#include <algorithm>
 #include <cassert>
 #include <compare>
 #include <cstdlib>
-#include <deque>
 #include <iostream>
 #include <iterator>
 #include <ostream>
@@ -97,12 +97,17 @@ auto PrintSolution(std::ostream& ostrm, std::vector<Group> const& groups) {
 }
 
 auto NaiveGroupRoads(std::vector<int> const& members) -> std::vector<Road> {
-  assert(members.size() >= 2);
+  assert(members.size() >= 1);
+  if (members.size() == 1) {
+    return {};
+  }
+
   std::vector<Road> dst(members.size() - 1);
 
   auto lhs = members.begin();
   auto rhs = std::next(members.begin());
   for (int i = 0; rhs != members.end(); ++lhs, ++rhs, ++i) {
+    assert(i < dst.size());
     dst[i] = Road{.a = *lhs, .b = *rhs};
   }
 
@@ -110,66 +115,49 @@ auto NaiveGroupRoads(std::vector<int> const& members) -> std::vector<Road> {
 }
 
 auto BoxSpatialId(int block_length, Box box) -> SpatialId {
+  assert(block_length != 0);
+
   return {
       .x = (box.lx + (box.rx - box.lx) / 2) / block_length,
       .y = (box.ly + (box.ry - box.ly) / 2) / block_length,
   };
 }
 
-auto ExpandFrontier(std::vector<std::vector<char>> const& visited, SpatialId id)
-    -> std::vector<SpatialId> {
-  std::vector<SpatialId> dst;
-  auto const max_id = visited.size();
-  for (int dx = -1; dx <= 1; ++dx) {
-    for (int dy = -1; dy <= 1; ++dy) {
-      int x = id.x + dx;
-      int y = id.y + dy;
-      if (dx == 0 && dy == 0 || x < 0 || x >= max_id || y < 0 || y >= max_id ||
-          visited[x][y]) {
-        continue;
-      }
-    }
-  }
-  return dst;
-}
-
 auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
     -> std::vector<Group> {
   int const block_length = kBlockLength;
-  int const n_blocks = kMaxXY / block_length + 1;
-
   std::vector<Group> groups(problem.m);
-  for (int i = 0; i < groups.size(); ++i) {
-    groups[i].members.reserve(problem.group_sizes[i]);
+  for (int group_id = 0; group_id < groups.size(); ++group_id) {
+    groups[group_id].members.reserve(problem.group_sizes[group_id]);
   }
 
-  std::unordered_set<int> ungrouped;
-  std::vector<std::vector<std::vector<int>>> areas(
-      n_blocks, std::vector<std::vector<int>>(n_blocks));
-  std::vector<std::vector<char>> visited(n_blocks,
-                                         std::vector<char>(n_blocks, 0));
-
-  for (int i = 0; i < problem.n; ++i) {
-    auto [x, y] = BoxSpatialId(kBlockLength, problem.boxes[i]);
-    assert(x < n_blocks);
-    assert(y < n_blocks);
-
-    areas[x][y].push_back(i);
-    ungrouped.insert(i);
+  std::vector<int> cities_by_group(problem.n);
+  for (int city_id = 0; city_id < problem.n; ++city_id) {
+    cities_by_group[city_id] = city_id;
   }
 
-  std::vector<SpatialId> stack{SpatialId{.x = n_blocks / 2, .y = n_blocks / 2}};
-  for (int g_id = 0; g_id < problem.m;) {
+  std::ranges::sort(cities_by_group,
+                    [block_length, &boxes = problem.boxes](int a, int b) {
+                      return BoxSpatialId(block_length, boxes[a]) <
+                             BoxSpatialId(block_length, boxes[b]);
+                    });
+
+  for (int city_idx = 0, group_id = 0; city_idx < problem.n;) {
+    groups[group_id].members.push_back(cities_by_group[city_idx++]);
+    if (groups[group_id].members.size() == problem.group_sizes[group_id]) {
+      ++group_id;
+    }
   }
 
-  for (int i = 0; i < problem.m; ++i) {
-    groups[i].roads = NaiveGroupRoads(groups[i].members);
+  for (int group_id = 0; group_id < groups.size(); ++group_id) {
+    groups[group_id].roads = NaiveGroupRoads(groups[group_id].members);
   }
 
   return groups;
 }
 
 }  // namespace tbrekalo
+   //
 namespace tb = tbrekalo;
 
 auto main(void) -> int {
