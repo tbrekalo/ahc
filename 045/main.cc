@@ -1,9 +1,15 @@
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
+#include <iterator>
 #include <ostream>
 #include <vector>
 
 namespace tbrekalo {
+
+static constexpr int kMaxXY = 10'000;
+static constexpr int kBlockLength = 1'000;
+static_assert(kMaxXY % kBlockLength == 0);
 
 struct Box {
   int lx;
@@ -60,9 +66,10 @@ auto LoadProblem(std::istream& istrm) -> Problem {
 auto PrintSolution(std::ostream& ostrm, std::vector<Group> const& groups) {
   ostrm << "!\n";
   for (auto const& [members, roads] : groups) {
-    for (int i = 0; i < members.size(); ++i) {
-      ostrm << members[i] << (i + 1 != members.size() ? ' ' : '\n');
+    for (auto it : members) {
+      ostrm << it << ' ';
     }
+    ostrm << '\n';
     for (auto [a, b] : roads) {
       ostrm << a << ' ' << b << '\n';
     }
@@ -70,27 +77,56 @@ auto PrintSolution(std::ostream& ostrm, std::vector<Group> const& groups) {
   std::flush(ostrm);
 }
 
-auto Solve(std::istream& istrm, std::ostream& ostrm, Problem const& problem)
+auto NaiveGroupRoads(std::vector<int> const& members) -> std::vector<Road> {
+  assert(members.size() >= 2);
+  std::vector<Road> dst(members.size() - 1);
+
+  auto lhs = members.begin();
+  auto rhs = std::next(members.begin());
+  for (int i = 0; rhs != members.end(); ++lhs, ++rhs, ++i) {
+    dst[i] = Road{.a = *lhs, .b = *rhs};
+  }
+
+  return dst;
+}
+
+auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
     -> std::vector<Group> {
-  std::vector<Group> groups(problem.m);
-  for (int i = 0, j = 0; j < problem.m; ++j) {
-    groups[j].members.resize(problem.group_sizes[j]);
-    for (int k = 0; k < problem.group_sizes[j]; ++k) {
-      groups[j].members[k] = i;
-      if (k > 0) {
-        groups[j].roads.push_back(Road{.a = i - 1, .b = i});
-      }
-      ++i;
+  std::vector<Group> dst(problem.m);
+  auto const n_blocks = kMaxXY / kBlockLength + 1;
+  std::vector<std::vector<std::vector<int>>> grid(
+      n_blocks, std::vector<std::vector<int>>(n_blocks));
+
+  for (auto i = 0; i < problem.n; ++i) {
+    auto const x =
+        problem.boxes[i].lx + (problem.boxes[i].rx - problem.boxes[i].lx) / 2;
+    auto const y =
+        problem.boxes[i].ly + (problem.boxes[i].ry - problem.boxes[i].ly) / 2;
+
+    grid[x / kBlockLength][y / kBlockLength].push_back(i);
+  }
+
+  std::vector<int> node_group(problem.n);
+  for (int i = 0, j = 0, k = 0; i < problem.n; ++i) {
+    node_group[i] = j;
+    dst[j].members.push_back(i);
+    if (++k == problem.group_sizes[j]) {
+      k = 0;
+      ++j;
     }
   }
 
-  return groups;
+  for (int i = 0; i < problem.m; ++i) {
+    dst[i].roads = NaiveGroupRoads(dst[i].members);
+  }
+
+  return dst;
 }
 
 }  // namespace tbrekalo
 namespace tb = tbrekalo;
 
 auto main(void) -> int {
-  tb::PrintSolution(std::cout,
-                    tb::Solve(std::cin, std::cout, tb::LoadProblem(std::cin)));
+  tb::PrintSolution(std::cout, tb::SpatialGrouping(std::cin, std::cout,
+                                                   tb::LoadProblem(std::cin)));
 }
