@@ -6,8 +6,7 @@
 #include <iostream>
 #include <iterator>
 #include <ostream>
-#include <unordered_map>
-#include <unordered_set>
+#include <span>
 #include <vector>
 
 namespace tbrekalo {
@@ -51,16 +50,7 @@ struct SpatialId {
       -> std::strong_ordering = default;
 };
 
-struct SpatialIdHash {
-  constexpr auto operator()(SpatialId id) const noexcept {
-    return (id.x << 5) + id.x + id.y;
-  }
-};
-
-using SpatialMap =
-    std::unordered_map<SpatialId, std::unordered_set<int>, SpatialIdHash>;
-
-auto LoadProblem(std::istream& istrm) -> Problem {
+static auto LoadProblem(std::istream& istrm) -> Problem {
   Problem dst{};
 
   istrm >> dst.n >> dst.m >> dst.q >> dst.l >> dst.w;
@@ -90,7 +80,7 @@ auto LoadProblem(std::istream& istrm) -> Problem {
   return dst;
 };
 
-auto PrintSolution(std::ostream& ostrm, std::vector<Group> const& groups) {
+static auto PrintSolution(std::ostream& ostrm, std::span<Group const> groups) {
   ostrm << "!\n";
   for (auto const& [members, roads] : groups) {
     for (auto it = members.begin(); it != members.end(); ++it) {
@@ -103,7 +93,24 @@ auto PrintSolution(std::ostream& ostrm, std::vector<Group> const& groups) {
   std::flush(ostrm);
 }
 
-auto NaiveGroupRoads(std::vector<int> const& members) -> std::vector<Road> {
+static auto Query(std::istream& istrm, std::ostream& ostrm, int l,
+                  std::span<int const> cities) -> std::vector<Road> {
+  assert(cities.size() >= 3);
+  ostrm << "? " << l << " ";
+  for (auto i = 0; i < cities.size(); ++i) {
+    ostrm << cities[i] << (i + 1 != cities.size() ? ' ' : '\n');
+  }
+
+  std::flush(ostrm);
+  std::vector<Road> dst(cities.size() - 1);
+  for (int i = 0; i < dst.size(); ++i) {
+    istrm >> dst[i].a >> dst[i].b;
+  }
+
+  return dst;
+}
+
+static auto NaiveGroupRoads(std::span<int const> members) -> std::vector<Road> {
   assert(members.size() >= 1);
   if (members.size() == 1) {
     return {};
@@ -121,7 +128,7 @@ auto NaiveGroupRoads(std::vector<int> const& members) -> std::vector<Road> {
   return dst;
 }
 
-auto BoxSpatialId(int block_length, Box box) -> SpatialId {
+static auto BoxSpatialId(int block_length, Box box) -> SpatialId {
   assert(block_length != 0);
 
   return {
@@ -130,12 +137,12 @@ auto BoxSpatialId(int block_length, Box box) -> SpatialId {
   };
 }
 
-auto SpatialIdDist(SpatialId lhs, SpatialId rhs) -> int {
+static auto SpatialIdDist(SpatialId lhs, SpatialId rhs) -> int {
   return (lhs.x - rhs.x) * (lhs.x - rhs.x) + (lhs.y - rhs.y) * (lhs.y - rhs.y);
 }
 
-auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
-    -> std::vector<Group> {
+static auto SpatialGrouping(std::istream&, std::ostream&,
+                            Problem const& problem) -> std::vector<Group> {
   struct GroupSpec {
     int id;
     int size;
@@ -168,7 +175,36 @@ auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
     std::copy(buffer.begin(), buffer.begin() + size,
               std::back_inserter(groups[group_id].members));
     buffer.erase(buffer.begin(), buffer.begin() + size);
-    groups[group_id].roads = NaiveGroupRoads(groups[group_id].members);
+  }
+
+  return groups;
+}
+
+static auto OptimizeRoads(std::istream& istrm, std::ostream& ostrm,
+                          std::vector<Group> groups, int q, int l)
+    -> std::vector<Group> {
+  for (auto group_id = 0; group_id < groups.size(); ++group_id) {
+    auto const& members = groups[group_id].members;
+    auto& roads = groups[group_id].roads;
+
+    for (auto lo = 0; lo + 1 < members.size();) {
+      std::vector<Road> insertion;
+      auto len = std::min<int>(l, members.size() - lo);
+      if (len >= 3 && q > 0) {
+        insertion =
+            Query(istrm, ostrm, len,
+                  std::span(members.begin() + lo, members.begin() + lo + len));
+        --q;
+
+      } else {
+        insertion =
+            NaiveGroupRoads(std::span(members.begin() + lo, members.end()));
+        len = members.size() - lo;
+      }
+
+      roads.insert(roads.end(), insertion.begin(), insertion.end());
+      lo += len - 1;
+    }
   }
 
   return groups;
@@ -179,6 +215,10 @@ auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
 namespace tb = tbrekalo;
 
 auto main(void) -> int {
-  tb::PrintSolution(std::cout, tb::SpatialGrouping(std::cin, std::cout,
-                                                   tb::LoadProblem(std::cin)));
+  auto problem = tb::LoadProblem(std::cin);
+  auto groups = tb::OptimizeRoads(
+      std::cin, std::cout, tb::SpatialGrouping(std::cin, std::cout, problem),
+      problem.q, problem.l);
+
+  tb::PrintSolution(std::cout, groups);
 }
