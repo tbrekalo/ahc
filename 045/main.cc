@@ -79,6 +79,12 @@ auto LoadProblem(std::istream& istrm) -> Problem {
       dst.boxes[i].ly >>
       dst.boxes[i].ry;
     /* clang-format on */
+
+    std::clamp(dst.boxes[i].lx, 0, kMaxXY);
+    std::clamp(dst.boxes[i].rx, 0, kMaxXY);
+
+    std::clamp(dst.boxes[i].ly, 0, kMaxXY);
+    std::clamp(dst.boxes[i].ry, 0, kMaxXY);
   }
 
   return dst;
