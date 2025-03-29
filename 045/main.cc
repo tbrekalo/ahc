@@ -2,6 +2,7 @@
 #include <cassert>
 #include <compare>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <ostream>
@@ -123,33 +124,44 @@ auto BoxSpatialId(int block_length, Box box) -> SpatialId {
   };
 }
 
+auto SpatialIdDist(SpatialId lhs, SpatialId rhs) -> int {
+  return (lhs.x - rhs.x) * (lhs.x - rhs.x) + (lhs.y - rhs.y) * (lhs.y - rhs.y);
+}
+
 auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
     -> std::vector<Group> {
+  struct GroupSpec {
+    int id;
+    int size;
+  };
+
   int const block_length = kBlockLength;
   std::vector<Group> groups(problem.m);
-  for (int group_id = 0; group_id < groups.size(); ++group_id) {
-    groups[group_id].members.reserve(problem.group_sizes[group_id]);
-  }
+  std::vector<int> buffer(problem.n);
 
-  std::vector<int> cities_by_group(problem.n);
   for (int city_id = 0; city_id < problem.n; ++city_id) {
-    cities_by_group[city_id] = city_id;
+    buffer[city_id] = city_id;
   }
 
-  std::ranges::sort(cities_by_group,
-                    [block_length, &boxes = problem.boxes](int a, int b) {
-                      return BoxSpatialId(block_length, boxes[a]) <
-                             BoxSpatialId(block_length, boxes[b]);
-                    });
-
-  for (int city_idx = 0, group_id = 0; city_idx < problem.n;) {
-    groups[group_id].members.push_back(cities_by_group[city_idx++]);
-    if (groups[group_id].members.size() == problem.group_sizes[group_id]) {
-      ++group_id;
-    }
+  std::vector<GroupSpec> group_specs(problem.m);
+  for (int i = 0; i < problem.m; ++i) {
+    group_specs[i] = GroupSpec{.id = i, .size = problem.group_sizes[i]};
   }
 
-  for (int group_id = 0; group_id < groups.size(); ++group_id) {
+  std::ranges::sort(group_specs, std::greater<>{}, &GroupSpec::size);
+  for (auto [group_id, size] : group_specs) {
+    groups[group_id].members.reserve(size);
+    std::sort(buffer.begin() + 1, buffer.end(),
+              [block_length, &boxes = problem.boxes, ref = *buffer.begin()](
+                  int a, int b) {
+                return SpatialIdDist(BoxSpatialId(block_length, boxes[a]),
+                                     BoxSpatialId(block_length, boxes[ref])) <
+                       SpatialIdDist(BoxSpatialId(block_length, boxes[b]),
+                                     BoxSpatialId(block_length, boxes[ref]));
+              });
+    std::copy(buffer.begin(), buffer.begin() + size,
+              std::back_inserter(groups[group_id].members));
+    buffer.erase(buffer.begin(), buffer.begin() + size);
     groups[group_id].roads = NaiveGroupRoads(groups[group_id].members);
   }
 
@@ -157,7 +169,7 @@ auto SpatialGrouping(std::istream&, std::ostream&, Problem const& problem)
 }
 
 }  // namespace tbrekalo
-   //
+
 namespace tb = tbrekalo;
 
 auto main(void) -> int {
