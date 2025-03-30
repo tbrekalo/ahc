@@ -7,6 +7,7 @@
 #include <iterator>
 #include <ostream>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 namespace tbrekalo {
@@ -243,44 +244,60 @@ static auto BoxClusterId(int block_length, Box box) -> ClusterId {
   };
 }
 
-static auto ClusterlIdDist(ClusterId lhs, ClusterId rhs) -> int {
+template <class T>
+static auto CalcDist(T lhs, T rhs) -> int
+  requires(std::is_same_v<T, ClusterId> || std::is_same_v<T, Coord>)
+{
   return (lhs.x - rhs.x) * (lhs.x - rhs.x) + (lhs.y - rhs.y) * (lhs.y - rhs.y);
 }
 
 static auto NaiveClustering(std::istream&, std::ostream&,
                             Problem const& problem) -> std::vector<Group> {
+  struct ApproxRoad {
+    int lhs;
+    int rhs;
+    int dist;
+  };
+
   struct GroupSpec {
     int id;
     int size;
   };
 
-  int const block_length = kBlockLength;
-  std::vector<Group> groups(problem.m);
-  std::vector<int> buffer(problem.n);
-
-  for (int city_id = 0; city_id < problem.n; ++city_id) {
-    buffer[city_id] = city_id;
+  std::vector<ApproxRoad> approx_roads;
+  for (int i = 0; i < problem.n; ++i) {
+    for (int j = i + 1; j < problem.n; ++j) {
+      approx_roads.push_back(ApproxRoad{
+          .lhs = i,
+          .rhs = j,
+          .dist = CalcDist(BoxAvgCoord(problem.boxes[i]),
+                           BoxAvgCoord(problem.boxes[j])),
+      });
+    }
   }
 
+  std::ranges::sort(approx_roads, std::less<>{}, &ApproxRoad::dist);
+
+  std::vector<Group> groups(problem.m);
+  std::vector<int> city_group(problem.n, -1);
   std::vector<GroupSpec> group_specs(problem.m);
   for (int i = 0; i < problem.m; ++i) {
-    group_specs[i] = GroupSpec{.id = i, .size = problem.group_sizes[i]};
+    group_specs[i] = {
+        .id = i,
+        .size = problem.group_sizes[i],
+    };
   }
 
   std::ranges::sort(group_specs, std::greater<>{}, &GroupSpec::size);
-  for (auto [group_id, size] : group_specs) {
-    groups[group_id].members.reserve(size);
-    std::sort(buffer.begin() + 1, buffer.end(),
-              [block_length, &boxes = problem.boxes, ref = *buffer.begin()](
-                  int a, int b) {
-                return ClusterlIdDist(BoxClusterId(block_length, boxes[a]),
-                                      BoxClusterId(block_length, boxes[ref])) <
-                       ClusterlIdDist(BoxClusterId(block_length, boxes[b]),
-                                      BoxClusterId(block_length, boxes[ref]));
-              });
-    std::copy(buffer.begin(), buffer.begin() + size,
-              std::back_inserter(groups[group_id].members));
-    buffer.erase(buffer.begin(), buffer.begin() + size);
+  for (int i = 0, j = 0; i < problem.m && j < approx_roads.size(); ++j) {
+    auto [lhs, rhs, _] = approx_roads[j];
+    if (city_group[lhs] != -1 || city_group[rhs] != -1) {
+      continue;
+    }
+
+    city_group[lhs] = city_group[rhs] = i;
+    groups[i].members.push_back(lhs);
+    groups[i].members.push_back(rhs);
   }
 
   return groups;
