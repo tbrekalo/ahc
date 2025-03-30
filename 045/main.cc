@@ -253,33 +253,18 @@ static auto CalcDist(T lhs, T rhs) -> int
 
 static auto NaiveClustering(std::istream&, std::ostream&,
                             Problem const& problem) -> std::vector<Group> {
-  struct ApproxRoad {
-    int lhs;
-    int rhs;
-    int dist;
-  };
-
   struct GroupSpec {
     int id;
     int size;
   };
 
-  std::vector<ApproxRoad> approx_roads;
-  for (int i = 0; i < problem.n; ++i) {
-    for (int j = i + 1; j < problem.n; ++j) {
-      approx_roads.push_back(ApproxRoad{
-          .lhs = i,
-          .rhs = j,
-          .dist = CalcDist(BoxAvgCoord(problem.boxes[i]),
-                           BoxAvgCoord(problem.boxes[j])),
-      });
-    }
+  std::vector<int> buffer(problem.n);
+
+  for (int city_id = 0; city_id < problem.n; ++city_id) {
+    buffer[city_id] = city_id;
   }
 
-  std::ranges::sort(approx_roads, std::less<>{}, &ApproxRoad::dist);
-
   std::vector<Group> groups(problem.m);
-  std::vector<int> city_group(problem.n, -1);
   std::vector<GroupSpec> group_specs(problem.m);
   for (int i = 0; i < problem.m; ++i) {
     group_specs[i] = {
@@ -289,15 +274,18 @@ static auto NaiveClustering(std::istream&, std::ostream&,
   }
 
   std::ranges::sort(group_specs, std::greater<>{}, &GroupSpec::size);
-  for (int i = 0, j = 0; i < problem.m && j < approx_roads.size(); ++j) {
-    auto [lhs, rhs, _] = approx_roads[j];
-    if (city_group[lhs] != -1 || city_group[rhs] != -1) {
-      continue;
-    }
 
-    city_group[lhs] = city_group[rhs] = i;
-    groups[i].members.push_back(lhs);
-    groups[i].members.push_back(rhs);
+  for (auto [group_id, size] : group_specs) {
+    groups[group_id].members.reserve(size);
+    std::sort(buffer.begin() + 1, buffer.end(),
+              [&boxes = problem.boxes, ref = *buffer.begin()](int a, int b) {
+                return CalcDist(BoxAvgCoord(boxes[a]),
+                                BoxAvgCoord(boxes[ref])) <
+                       CalcDist(BoxAvgCoord(boxes[b]), BoxAvgCoord(boxes[ref]));
+              });
+    std::copy(buffer.begin(), buffer.begin() + size,
+              std::back_inserter(groups[group_id].members));
+    buffer.erase(buffer.begin(), buffer.begin() + size);
   }
 
   return groups;
