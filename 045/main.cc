@@ -6,6 +6,7 @@
 #include <iostream>
 #include <iterator>
 #include <ostream>
+#include <random>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -62,6 +63,14 @@ class Xoshiro256pp {
   constexpr Xoshiro256pp() = delete;
   constexpr explicit Xoshiro256pp(value_type const& state) : s_(state) {}
 
+  constexpr static auto min() noexcept -> result_type {
+    return std::numeric_limits<result_type>::min();
+  }
+
+  constexpr static auto max() noexcept -> result_type {
+    return std::numeric_limits<result_type>::max();
+  }
+
   constexpr auto next() noexcept -> result_type {
     const std::uint64_t result = rotl(s_[0] + s_[3], 23) + s_[0];
     const std::uint64_t t = s_[1] << 17;
@@ -100,6 +109,8 @@ namespace tbrekalo {
 
 static constexpr int kMaxXY = 10'000;
 static constexpr int kBlockLength = 1'000;
+
+static Xoshiro256pp rng(Xoshiro256pp::value_type{1, 2, 3, 4});
 
 struct Box {
   int lx;
@@ -205,6 +216,9 @@ static auto Query(std::istream& istrm, std::ostream& ostrm, int l,
   std::vector<Road> dst(cities.size() - 1);
   for (int i = 0; i < dst.size(); ++i) {
     istrm >> dst[i].a >> dst[i].b;
+    if (dst[i].a > dst[i].b) {
+      std::swap(dst[i].a, dst[i].b);
+    }
   }
 
   return dst;
@@ -291,12 +305,53 @@ static auto NaiveClustering(std::istream&, std::ostream&,
   return groups;
 }
 
-static auto OptimizeGroups(std::istream& istrm, std::ostream& ostrm,
-                           Problem const& problem, std::vector<Group> groups)
-    -> std::vector<Group> {
+static auto RebalanceGroups(std::span<Box const> boxes,
+                            std::vector<Group> groups) {
+  // TODO: implement
   std::vector<Coord> centers(groups.size(), {0, 0});
   for (int i = 0; i < groups.size(); ++i) {
     for (int j = 0; j < groups[i].members.size(); ++j) {
+      centers[i] = centers[i] + BoxAvgCoord(boxes[groups[i].members[j]]);
+    }
+    centers[i].x = centers[i].x / groups[i].members.size();
+    centers[i].y = centers[i].y / groups[i].members.size();
+  }
+}
+
+static auto OptimizeGroups(std::istream& istrm, std::ostream& ostrm, int q,
+                           std::span<Box const> boxes,
+                           std::vector<Group> groups) -> std::vector<Group> {
+  std::uniform_int_distribution<> group_id_distr(0, groups.size() - 1);
+  while (q > 0) {
+    int lhs = group_id_distr(rng);
+    int rhs = (lhs + 1) % groups.size();
+    if (groups[lhs].members.size() == 1 && groups[rhs].members.size() == 1) {
+      continue;
+    }
+    if (groups[lhs].members.size() == 1) {
+      std::swap(lhs, rhs);
+    }
+
+    std::uniform_int_distribution<> lhs_distr(0,
+                                              groups[lhs].members.size() - 1);
+    std::uniform_int_distribution<> rhs_distr(0,
+                                              groups[rhs].members.size() - 1);
+
+    int lhs_a_idx = lhs_distr(rng);
+    int lhs_b_idx = (lhs_a_idx + 1) % groups[lhs].members.size();
+    int rhs_a_idx = rhs_distr(rng);
+
+    int lhs_a = groups[lhs].members[lhs_a_idx];
+    int lhs_b = groups[lhs].members[lhs_b_idx];
+    int rhs_a = groups[rhs].members[rhs_a_idx];
+
+    std::vector<int> buffer{lhs_a, lhs_b, rhs_a};
+
+    --q;
+    auto mst = Query(istrm, ostrm, 3, buffer);
+    if (mst[0].a != std::min(lhs_a, lhs_b) &&
+        mst[0].b != std::max(lhs_a, lhs_b)) {
+      std::swap(groups[lhs].members[lhs_b_idx], groups[rhs].members[rhs_a_idx]);
     }
   }
 
@@ -306,7 +361,7 @@ static auto OptimizeGroups(std::istream& istrm, std::ostream& ostrm,
 static auto OptimizeRoads(std::istream& istrm, std::ostream& ostrm,
                           std::vector<Group> groups, int q, int l)
     -> std::vector<Group> {
-  for (auto group_id = 0; group_id < groups.size(); ++group_id) {
+  for (int group_id = 0; group_id < groups.size(); ++group_id) {
     auto const& members = groups[group_id].members;
     auto& roads = groups[group_id].roads;
 
@@ -340,8 +395,10 @@ namespace tb = tbrekalo;
 auto main(void) -> int {
   auto problem = tb::LoadProblem(std::cin);
   auto groups = tb::OptimizeRoads(
-      std::cin, std::cout, tb::NaiveClustering(std::cin, std::cout, problem),
-      problem.q, problem.l);
+      std::cin, std::cout,
+      tb::OptimizeGroups(std::cin, std::cout, problem.q / 2, problem.boxes,
+                         tb::NaiveClustering(std::cin, std::cout, problem)),
+      problem.q / 2, problem.l);
 
   tb::PrintSolution(std::cout, groups);
 }
