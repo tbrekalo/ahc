@@ -5,10 +5,12 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <ostream>
-#include <random>
+#include <set>
 #include <span>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
 namespace tbrekalo {
@@ -272,10 +274,31 @@ static auto NaiveClustering(std::istream&, std::ostream&,
     int size;
   };
 
-  std::vector<int> buffer(problem.n);
+  struct Edge {
+    int target;
+    int dist;
+  };
 
-  for (int city_id = 0; city_id < problem.n; ++city_id) {
-    buffer[city_id] = city_id;
+  struct EdgeCmp {
+    constexpr auto operator()(Edge lhs, Edge rhs) const noexcept -> bool {
+      return lhs.dist < rhs.dist;
+    }
+  };
+
+  std::unordered_set<int> ungrouped;
+  std::vector<int> grouped(problem.n, -1);
+  std::vector<std::vector<int>> dists(
+      problem.n, std::vector<int>(problem.n, kMaxXY * kMaxXY));
+
+  for (int i = 1; i < problem.n; ++i) {
+    for (int j = 0; j < i; ++j) {
+      dists[i][j] = dists[j][i] = CalcDist(BoxAvgCoord(problem.boxes[i]),
+                                           BoxAvgCoord(problem.boxes[j]));
+    }
+  }
+
+  for (int i = 0; i < problem.n; ++i) {
+    ungrouped.insert(i);
   }
 
   std::vector<Group> groups(problem.m);
@@ -287,71 +310,39 @@ static auto NaiveClustering(std::istream&, std::ostream&,
     };
   }
 
+  int q = problem.q / 2;
   std::ranges::sort(group_specs, std::greater<>{}, &GroupSpec::size);
 
-  for (auto [group_id, size] : group_specs) {
-    groups[group_id].members.reserve(size);
-    std::sort(buffer.begin() + 1, buffer.end(),
-              [&boxes = problem.boxes, ref = *buffer.begin()](int a, int b) {
-                return CalcDist(BoxAvgCoord(boxes[a]),
-                                BoxAvgCoord(boxes[ref])) <
-                       CalcDist(BoxAvgCoord(boxes[b]), BoxAvgCoord(boxes[ref]));
-              });
-    std::copy(buffer.begin(), buffer.begin() + size,
-              std::back_inserter(groups[group_id].members));
-    buffer.erase(buffer.begin(), buffer.begin() + size);
-  }
+  for (auto [group_id, group_target_size] : group_specs) {
+    std::set<Edge, EdgeCmp> edges;
+    auto insert_edges = [n = problem.n, &grouped, &dists, &edges](int from) {
+      for (int i = 0; i < n; ++i) {
+        if (grouped[i] != -1) {
+          continue;
+        }
 
-  return groups;
-}
+        edges.insert(Edge{.target = i, .dist = dists[from][i]});
+      }
+    };
 
-static auto RebalanceGroups(std::span<Box const> boxes,
-                            std::vector<Group> groups) {
-  // TODO: implement
-  std::vector<Coord> centers(groups.size(), {0, 0});
-  for (int i = 0; i < groups.size(); ++i) {
-    for (int j = 0; j < groups[i].members.size(); ++j) {
-      centers[i] = centers[i] + BoxAvgCoord(boxes[groups[i].members[j]]);
-    }
-    centers[i].x = centers[i].x / groups[i].members.size();
-    centers[i].y = centers[i].y / groups[i].members.size();
-  }
-}
+    edges.insert(Edge{.target = *ungrouped.begin(), .dist = 0});
+    while (!edges.empty()) {
+      auto [city, _] = *edges.begin();
+      edges.erase(*edges.begin());
 
-static auto OptimizeGroups(std::istream& istrm, std::ostream& ostrm, int q,
-                           std::span<Box const> boxes,
-                           std::vector<Group> groups) -> std::vector<Group> {
-  std::uniform_int_distribution<> group_id_distr(0, groups.size() - 1);
-  while (q > 0) {
-    int lhs = group_id_distr(rng);
-    int rhs = (lhs + 1) % groups.size();
-    if (groups[lhs].members.size() == 1 && groups[rhs].members.size() == 1) {
-      continue;
-    }
-    if (groups[lhs].members.size() == 1) {
-      std::swap(lhs, rhs);
-    }
+      if (grouped[city] != -1) {
+        continue;
+      }
 
-    std::uniform_int_distribution<> lhs_distr(0,
-                                              groups[lhs].members.size() - 1);
-    std::uniform_int_distribution<> rhs_distr(0,
-                                              groups[rhs].members.size() - 1);
+      groups[group_id].members.push_back(city);
+      grouped[city] = group_id;
+      ungrouped.erase(city);
 
-    int lhs_a_idx = lhs_distr(rng);
-    int lhs_b_idx = (lhs_a_idx + 1) % groups[lhs].members.size();
-    int rhs_a_idx = rhs_distr(rng);
+      if (groups[group_id].members.size() == group_target_size) {
+        break;
+      }
 
-    int lhs_a = groups[lhs].members[lhs_a_idx];
-    int lhs_b = groups[lhs].members[lhs_b_idx];
-    int rhs_a = groups[rhs].members[rhs_a_idx];
-
-    std::vector<int> buffer{lhs_a, lhs_b, rhs_a};
-
-    --q;
-    auto mst = Query(istrm, ostrm, 3, buffer);
-    if (mst[0].a != std::min(lhs_a, lhs_b) &&
-        mst[0].b != std::max(lhs_a, lhs_b)) {
-      std::swap(groups[lhs].members[lhs_b_idx], groups[rhs].members[rhs_a_idx]);
+      insert_edges(city);
     }
   }
 
@@ -395,9 +386,7 @@ namespace tb = tbrekalo;
 auto main(void) -> int {
   auto problem = tb::LoadProblem(std::cin);
   auto groups = tb::OptimizeRoads(
-      std::cin, std::cout,
-      tb::OptimizeGroups(std::cin, std::cout, problem.q / 2, problem.boxes,
-                         tb::NaiveClustering(std::cin, std::cout, problem)),
+      std::cin, std::cout, tb::NaiveClustering(std::cin, std::cout, problem),
       problem.q / 2, problem.l);
 
   tb::PrintSolution(std::cout, groups);
