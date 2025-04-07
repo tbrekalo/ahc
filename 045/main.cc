@@ -355,27 +355,6 @@ static auto OptimizeRoads(std::istream& istrm, std::ostream& ostrm,
                           std::span<Box const> boxes, std::vector<Group> groups,
                           int q, int l) -> std::vector<Group> {
   assert(l >= 3);
-  auto find_avg = [boxes](std::span<int const> members) -> std::optional<int> {
-    if (members.empty()) {
-      return std::nullopt;
-    }
-
-    Coord avg_coord{0, 0};
-    for (auto city : members) {
-      avg_coord = avg_coord + BoxAvgCoord(boxes[city]);
-    }
-
-    avg_coord.x /= members.size();
-    avg_coord.y /= members.size();
-
-    return std::ranges::min_element(members, std::less<>{},
-                                    [boxes, avg_coord](int city) -> bool {
-                                      return CalcDist(avg_coord,
-                                                      BoxAvgCoord(boxes[city]));
-                                    }) -
-           members.begin();
-  };
-
   for (int group_id = 0; group_id < groups.size(); ++group_id) {
     auto const& members = groups[group_id].members;
     auto& roads = groups[group_id].roads;
