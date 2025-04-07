@@ -277,7 +277,8 @@ static auto NaiveClustering(std::istream&, std::ostream&,
   };
 
   struct Edge {
-    int target;
+    int from;
+    int to;
     int dist;
   };
 
@@ -323,13 +324,14 @@ static auto NaiveClustering(std::istream&, std::ostream&,
           continue;
         }
 
-        edges.insert(Edge{.target = i, .dist = dists[from][i]});
+        edges.insert(Edge{.from = from, .to = i, .dist = dists[from][i]});
       }
     };
 
-    edges.insert(Edge{.target = *ungrouped.begin(), .dist = 0});
+    edges.insert(
+        Edge{.from = *ungrouped.begin(), .to = *ungrouped.begin(), .dist = 0});
     while (!edges.empty()) {
-      auto [city, _] = *edges.begin();
+      auto [from, city, _] = *edges.begin();
       edges.erase(*edges.begin());
 
       if (grouped[city] != -1) {
