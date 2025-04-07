@@ -6,6 +6,8 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <numeric>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <span>
@@ -350,8 +352,30 @@ static auto NaiveClustering(std::istream&, std::ostream&,
 }
 
 static auto OptimizeRoads(std::istream& istrm, std::ostream& ostrm,
-                          std::vector<Group> groups, int q, int l)
-    -> std::vector<Group> {
+                          std::span<Box const> boxes, std::vector<Group> groups,
+                          int q, int l) -> std::vector<Group> {
+  assert(l >= 3);
+  auto find_avg = [boxes](std::span<int const> members) -> std::optional<int> {
+    if (members.empty()) {
+      return std::nullopt;
+    }
+
+    Coord avg_coord{0, 0};
+    for (auto city : members) {
+      avg_coord = avg_coord + BoxAvgCoord(boxes[city]);
+    }
+
+    avg_coord.x /= members.size();
+    avg_coord.y /= members.size();
+
+    return std::ranges::min_element(members, std::less<>{},
+                                    [boxes, avg_coord](int city) -> bool {
+                                      return CalcDist(avg_coord,
+                                                      BoxAvgCoord(boxes[city]));
+                                    }) -
+           members.begin();
+  };
+
   for (int group_id = 0; group_id < groups.size(); ++group_id) {
     auto const& members = groups[group_id].members;
     auto& roads = groups[group_id].roads;
@@ -360,9 +384,12 @@ static auto OptimizeRoads(std::istream& istrm, std::ostream& ostrm,
       std::vector<Road> insertion;
       auto len = std::min<int>(l, members.size() - lo);
       if (len >= 3 && q > 0) {
-        insertion =
-            Query(istrm, ostrm, len,
-                  std::span(members.begin() + lo, members.begin() + lo + len));
+        std::vector<int> buffer;
+        buffer.reserve(len);
+        buffer.insert(buffer.end(), members.begin() + lo,
+                      members.begin() + lo + len);
+
+        insertion = Query(istrm, ostrm, len, buffer);
         --q;
 
       } else {
@@ -386,8 +413,8 @@ namespace tb = tbrekalo;
 auto main(void) -> int {
   auto problem = tb::LoadProblem(std::cin);
   auto groups = tb::OptimizeRoads(
-      std::cin, std::cout, tb::NaiveClustering(std::cin, std::cout, problem),
-      problem.q / 2, problem.l);
+      std::cin, std::cout, problem.boxes,
+      tb::NaiveClustering(std::cin, std::cout, problem), problem.q, problem.l);
 
   tb::PrintSolution(std::cout, groups);
 }
