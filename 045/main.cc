@@ -313,9 +313,7 @@ static auto NaiveClustering(std::istream&, std::ostream&,
     };
   }
 
-  int q = problem.q / 2;
   std::ranges::sort(group_specs, std::greater<>{}, &GroupSpec::size);
-
   for (auto [group_id, group_target_size] : group_specs) {
     std::set<Edge, EdgeCmp> edges;
     auto insert_edges = [n = problem.n, &grouped, &dists, &edges](int from) {
