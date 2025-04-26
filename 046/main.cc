@@ -119,6 +119,7 @@ namespace tbrekalo {
 
 static inline constexpr int N = 20;
 static inline constexpr int M = 40;
+static inline constexpr int MAX_TURNS = 2 * N * M;
 
 struct Coord {
   int row;
@@ -215,16 +216,17 @@ static auto Print(std::ostream& ostrm, std::span<Turn> turns) -> void {
 
 static auto Solve(Coords const& coords) -> std::vector<Turn> {
   std::vector<Turn> turns;
+  auto can_keep_turning = [&turns] -> bool { return turns.size() < MAX_TURNS; };
   Coord cur = coords[0];
-  auto repeat_move = [&turns, &cur](Turn turn, int n) {
-    for (int i = 0; i < n; ++i) {
+  auto repeat_move = [&turns, &can_keep_turning, &cur](Turn turn, int n) {
+    for (int i = 0; i < n && can_keep_turning(); ++i) {
       turns.push_back(turn);
       cur = cur + DirToDif(turn.dir);
     }
   };
 
-  for (int i = 1; i < M; ++i) {
-    while (cur != coords[i]) {
+  for (int i = 1; i < M && can_keep_turning(); ++i) {
+    while (cur != coords[i] && can_keep_turning()) {
       // down
       if (cur.row < coords[i].row) {
         if (N - 1 - coords[i].row < coords[i].row - cur.row) {
@@ -273,6 +275,7 @@ static auto Solve(Coords const& coords) -> std::vector<Turn> {
     }
   }
 
+  assert(turns.size() <= MAX_TURNS);
   return turns;
 }
 
