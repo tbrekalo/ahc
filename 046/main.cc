@@ -212,23 +212,47 @@ static auto Solve(Coords const& coords) -> std::vector<Turn> {
 
   for (int i = 1; i < M; ++i) {
     while (cur != coords[i]) {
+      // down
       if (cur.row < coords[i].row) {
+        if (N - 1 - coords[i].row < coords[i].row - cur.row) {
+          turns.push_back(Turn{.action = Action::S, .dir = Dir::D});
+          cur = {.row = N - 1, .col = cur.col};
+          continue;
+        }
         repeat_move(Turn{.action = Action::M, .dir = Dir::D},
                     coords[i].row - cur.row);
         continue;
       }
+      // up
       if (cur.row > coords[i].row) {
+        if (coords[i].row < cur.row - coords[i].row) {
+          turns.push_back(Turn{.action = Action::S, .dir = Dir::U});
+          cur = {.row = 0, .col = cur.col};
+          continue;
+        }
         repeat_move(Turn{.action = Action::M, .dir = Dir::U},
                     cur.row - coords[i].row);
         continue;
       }
 
+      // left
       if (cur.col > coords[i].col) {
+        if (coords[i].col < cur.col - coords[i].col) {
+          turns.push_back(Turn{.action = Action::S, .dir = Dir::L});
+          cur = {.row = cur.row, .col = 0};
+          continue;
+        }
         repeat_move(Turn{.action = Action::M, .dir = Dir::L},
                     cur.col - coords[i].col);
         continue;
       }
+      // right
       if (cur.col < coords[i].col) {
+        if (N - 1 - coords[i].col < coords[i].col - cur.col) {
+          turns.push_back(Turn{.action = Action::S, .dir = Dir::R});
+          cur = {.row = cur.row, .col = N - 1};
+          continue;
+        }
         repeat_move(Turn{.action = Action::M, .dir = Dir::R},
                     coords[i].col - cur.col);
         continue;
