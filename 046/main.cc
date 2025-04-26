@@ -139,9 +139,7 @@ struct Coord {
   return dst;
 }
 
-struct Problem {
-  std::vector<Coord> coords;
-};
+using Coords = std::vector<Coord>;
 
 using Grid = std::array<std::array<char, N>, N>;
 
@@ -183,13 +181,13 @@ static auto operator<<(std::ostream& ostrm, Turn turn) -> std::ostream& {
   return DIR_TO_DIF[std::to_underlying(dir)];
 };
 
-static auto Load(std::istream& istrm) -> Problem {
+static auto Load(std::istream& istrm) -> Coords {
   int _;
-  Problem dst;
+  Coords dst;
   istrm >> _ >> _;
-  dst.coords.resize(M);
+  dst.resize(M);
   for (int i = 0; i < M; ++i) {
-    istrm >> dst.coords[i].r >> dst.coords[i].c;
+    istrm >> dst[i].r >> dst[i].c;
   }
 
   return dst;
@@ -202,9 +200,9 @@ static auto Print(std::ostream& ostrm, std::span<Turn> turns) -> void {
   std::flush(ostrm);
 }
 
-static auto Solve(Problem const& problem) -> std::vector<Turn> {
+static auto Solve(Coords const& coords) -> std::vector<Turn> {
   std::vector<Turn> turns;
-  Coord cur = problem.coords[0];
+  Coord cur = coords[0];
   auto repeat_move = [&turns, &cur](Turn turn, int n) {
     for (int i = 0; i < n; ++i) {
       turns.push_back(turn);
@@ -213,26 +211,26 @@ static auto Solve(Problem const& problem) -> std::vector<Turn> {
   };
 
   for (int i = 1; i < M; ++i) {
-    while (cur != problem.coords[i]) {
-      if (cur.r < problem.coords[i].r) {
+    while (cur != coords[i]) {
+      if (cur.r < coords[i].r) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::D},
-                    problem.coords[i].r - cur.r);
+                    coords[i].r - cur.r);
         continue;
       }
-      if (cur.r > problem.coords[i].r) {
+      if (cur.r > coords[i].r) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::U},
-                    cur.r - problem.coords[i].r);
+                    cur.r - coords[i].r);
         continue;
       }
 
-      if (cur.c > problem.coords[i].c) {
+      if (cur.c > coords[i].c) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::L},
-                    cur.c - problem.coords[i].c);
+                    cur.c - coords[i].c);
         continue;
       }
-      if (cur.c < problem.coords[i].c) {
+      if (cur.c < coords[i].c) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::R},
-                    problem.coords[i].c - cur.c);
+                    coords[i].c - cur.c);
         continue;
       }
     }
