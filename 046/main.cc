@@ -1,5 +1,6 @@
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <compare>
 #include <iostream>
 #include <limits>
@@ -7,6 +8,18 @@
 #include <span>
 #include <utility>
 #include <vector>
+
+namespace tbrekalo {
+
+static constexpr auto MAX_RUNTIME = std::chrono::milliseconds(1'800);
+static const auto INIT_TIME = std::chrono::system_clock::now();
+
+static auto elapsed() -> std::chrono::milliseconds {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now() - INIT_TIME);
+}
+
+}  // namespace tbrekalo
 
 namespace tbrekalo {
 
@@ -270,6 +283,7 @@ namespace tb = tbrekalo;
 auto main(int, char**) -> int {
   auto problem = tb::Load(std::cin);
   auto turns = tb::Solve(problem);
+  std::cerr << tb::elapsed() << std::endl;
   tb::Print(std::cout, turns);
   return 0;
 }
