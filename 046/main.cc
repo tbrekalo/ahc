@@ -205,27 +205,34 @@ static auto Print(std::ostream& ostrm, std::span<Turn> turns) -> void {
 static auto Solve(Problem const& problem) -> std::vector<Turn> {
   std::vector<Turn> turns;
   Coord cur = problem.coords[0];
+  auto repeat_move = [&turns, &cur](Turn turn, int n) {
+    for (int i = 0; i < n; ++i) {
+      turns.push_back(turn);
+      cur = cur + DirToDif(turn.dir);
+    }
+  };
+
   for (int i = 1; i < M; ++i) {
     while (cur != problem.coords[i]) {
       if (cur.r < problem.coords[i].r) {
-        turns.push_back(Turn{.action = Action::M, .dir = Dir::D});
-        cur = cur + DirToDif(Dir::D);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::D},
+                    problem.coords[i].r - cur.r);
         continue;
       }
       if (cur.r > problem.coords[i].r) {
-        turns.push_back(Turn{.action = Action::M, .dir = Dir::U});
-        cur = cur + DirToDif(Dir::U);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::U},
+                    cur.r - problem.coords[i].r);
         continue;
       }
 
       if (cur.c > problem.coords[i].c) {
-        turns.push_back(Turn{.action = Action::M, .dir = Dir::L});
-        cur = cur + DirToDif(Dir::L);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::L},
+                    cur.c - problem.coords[i].c);
         continue;
       }
       if (cur.c < problem.coords[i].c) {
-        turns.push_back(Turn{.action = Action::M, .dir = Dir::R});
-        cur = cur + DirToDif(Dir::R);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::R},
+                    problem.coords[i].c - cur.c);
         continue;
       }
     }
