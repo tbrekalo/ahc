@@ -5,7 +5,6 @@
 #include <iostream>
 #include <limits>
 #include <ostream>
-#include <span>
 #include <utility>
 #include <vector>
 
@@ -195,6 +194,11 @@ static auto operator<<(std::ostream& ostrm, Turn turn) -> std::ostream& {
   return DIR_TO_DIF[std::to_underlying(dir)];
 };
 
+struct Solution {
+  int score;
+  std::vector<Turn> turns;
+};
+
 static auto Load(std::istream& istrm) -> Coords {
   int _;
   Coords dst;
@@ -207,14 +211,15 @@ static auto Load(std::istream& istrm) -> Coords {
   return dst;
 }
 
-static auto Print(std::ostream& ostrm, std::span<Turn> turns) -> void {
-  for (int i = 0; i < turns.size(); ++i) {
-    ostrm << turns[i] << '\n';
+static auto Print(std::ostream& ostrm, Solution const& solution) -> void {
+  std::cerr << "final-score=" << solution.score << std::endl;
+  for (int i = 0; i < solution.turns.size(); ++i) {
+    ostrm << solution.turns[i] << '\n';
   }
   std::flush(ostrm);
 }
 
-static auto Solve(Coords const& coords) -> std::vector<Turn> {
+static auto Solve(Coords const& coords) -> Solution {
   std::vector<Turn> turns;
   auto can_keep_turning = [&turns] -> bool { return turns.size() < MAX_TURNS; };
   Coord cur = coords[0];
@@ -225,58 +230,65 @@ static auto Solve(Coords const& coords) -> std::vector<Turn> {
     }
   };
 
-  for (int i = 1; i < M && can_keep_turning(); ++i) {
-    while (cur != coords[i] && can_keep_turning()) {
+  int m = 1;
+  for (; m < M && can_keep_turning(); ++m) {
+    while (cur != coords[m] && can_keep_turning()) {
       // down
-      if (cur.row < coords[i].row) {
-        if (N - 1 - coords[i].row < coords[i].row - cur.row) {
+      if (cur.row < coords[m].row) {
+        if (N - 1 - coords[m].row < coords[m].row - cur.row) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::D});
           cur = {.row = N - 1, .col = cur.col};
           continue;
         }
         repeat_move(Turn{.action = Action::M, .dir = Dir::D},
-                    coords[i].row - cur.row);
+                    coords[m].row - cur.row);
         continue;
       }
       // up
-      if (cur.row > coords[i].row) {
-        if (coords[i].row < cur.row - coords[i].row) {
+      if (cur.row > coords[m].row) {
+        if (coords[m].row < cur.row - coords[m].row) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::U});
           cur = {.row = 0, .col = cur.col};
           continue;
         }
         repeat_move(Turn{.action = Action::M, .dir = Dir::U},
-                    cur.row - coords[i].row);
+                    cur.row - coords[m].row);
         continue;
       }
 
       // left
-      if (cur.col > coords[i].col) {
-        if (coords[i].col < cur.col - coords[i].col) {
+      if (cur.col > coords[m].col) {
+        if (coords[m].col < cur.col - coords[m].col) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::L});
           cur = {.row = cur.row, .col = 0};
           continue;
         }
         repeat_move(Turn{.action = Action::M, .dir = Dir::L},
-                    cur.col - coords[i].col);
+                    cur.col - coords[m].col);
         continue;
       }
       // right
-      if (cur.col < coords[i].col) {
-        if (N - 1 - coords[i].col < coords[i].col - cur.col) {
+      if (cur.col < coords[m].col) {
+        if (N - 1 - coords[m].col < coords[m].col - cur.col) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::R});
           cur = {.row = cur.row, .col = N - 1};
           continue;
         }
         repeat_move(Turn{.action = Action::M, .dir = Dir::R},
-                    coords[i].col - cur.col);
+                    coords[m].col - cur.col);
         continue;
       }
     }
   }
 
   assert(turns.size() <= MAX_TURNS);
-  return turns;
+  std::cerr << "m<M=" << (m < M) << "\tm=" << m
+            << "\tM+2NM-T=" << M + 2 * N * M - static_cast<int>(turns.size())
+            << std::endl;
+  return Solution{
+      .score = m < M ? m : M + 2 * N * M - static_cast<int>(turns.size()),
+      .turns = std::move(turns),
+  };
 }
 
 }  // namespace tbrekalo
@@ -285,8 +297,8 @@ namespace tb = tbrekalo;
 
 auto main(int, char**) -> int {
   auto problem = tb::Load(std::cin);
-  auto turns = tb::Solve(problem);
-  std::cerr << tb::elapsed() << std::endl;
-  tb::Print(std::cout, turns);
+  auto solution = tb::Solve(problem);
+  std::cerr << "elapsed=" << tb::elapsed() << std::endl;
+  tb::Print(std::cout, solution);
   return 0;
 }
