@@ -1,10 +1,13 @@
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
 #include <compare>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <ostream>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -112,6 +115,9 @@ class Xoshiro256pp {
   }
 };
 
+static Xoshiro256pp RNG{{42, 9, 7, 1998}};
+static std::bernoulli_distribution P(0.25);
+
 }  // namespace tbrekalo
 
 namespace tbrekalo {
@@ -153,15 +159,6 @@ struct Coord {
 }
 
 using Coords = std::vector<Coord>;
-
-using Grid = std::array<std::array<char, N>, N>;
-
-[[gnu::always_inline]] inline constexpr auto CanPlace(Grid const& grid,
-                                                      Coord coord) noexcept
-    -> bool {
-  auto [r, c] = coord;
-  return InBounds(coord) && grid[coord.row][coord.col] == 0;
-}
 
 enum class Action : char { M, S, A };
 static auto operator<<(std::ostream& ostrm, Action action) -> std::ostream& {
@@ -219,7 +216,26 @@ static auto Print(std::ostream& ostrm, Solution const& solution) -> void {
   std::flush(ostrm);
 }
 
-static auto Solve(Coords const& coords) -> Solution {
+struct Range {
+  int lo = 0;
+  int hi = N - 1;
+};
+
+static auto Solve(Coords const& coords, bool alter) -> Solution {
+  std::array<int, N> row_cnt;
+  std::array<int, N> col_cnt;
+  std::array<Range, N> row_range;
+  std::array<Range, N> col_range;
+
+  {
+    std::ranges::fill(row_cnt, 0);
+    std::ranges::fill(col_cnt, 0);
+    for (int i = 1; i < M; ++i) {
+      ++row_cnt[coords[i].row];
+      ++col_cnt[coords[i].col];
+    }
+  }
+
   std::vector<Turn> turns;
   auto can_keep_turning = [&turns] -> bool { return turns.size() < MAX_TURNS; };
   Coord cur = coords[0];
@@ -232,59 +248,87 @@ static auto Solve(Coords const& coords) -> Solution {
 
   int m = 1;
   for (; m < M && can_keep_turning(); ++m) {
+    auto [row, col] = coords[m];
     while (cur != coords[m] && can_keep_turning()) {
       // down
-      if (cur.row < coords[m].row) {
-        if (N - 1 - coords[m].row < coords[m].row - cur.row) {
+      if (cur.row < row) {
+        if (row_range[row].hi - row < row - cur.row) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::D});
-          cur = {.row = N - 1, .col = cur.col};
+          cur = {.row = row_range[row].hi, .col = cur.col};
           continue;
         }
-        repeat_move(Turn{.action = Action::M, .dir = Dir::D},
-                    coords[m].row - cur.row);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::D}, row - cur.row);
         continue;
       }
       // up
-      if (cur.row > coords[m].row) {
-        if (coords[m].row < cur.row - coords[m].row) {
+      if (cur.row > row) {
+        if (row - row_range[row].lo < cur.row - row) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::U});
-          cur = {.row = 0, .col = cur.col};
+          cur = {.row = row_range[row].lo, .col = cur.col};
           continue;
         }
-        repeat_move(Turn{.action = Action::M, .dir = Dir::U},
-                    cur.row - coords[m].row);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::U}, cur.row - row);
         continue;
       }
 
       // left
-      if (cur.col > coords[m].col) {
-        if (coords[m].col < cur.col - coords[m].col) {
+      if (cur.col > col) {
+        if (col - col_range[col].lo < cur.col - col) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::L});
-          cur = {.row = cur.row, .col = 0};
+          cur = {.row = cur.row, .col = col_range[col].lo};
           continue;
         }
-        repeat_move(Turn{.action = Action::M, .dir = Dir::L},
-                    cur.col - coords[m].col);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::L}, cur.col - col);
         continue;
       }
       // right
-      if (cur.col < coords[m].col) {
-        if (N - 1 - coords[m].col < coords[m].col - cur.col) {
+      if (cur.col < col) {
+        if (col_range[col].hi - col < col - cur.col) {
           turns.push_back(Turn{.action = Action::S, .dir = Dir::R});
-          cur = {.row = cur.row, .col = N - 1};
+          cur = {.row = cur.row, .col = col_range[col].hi};
           continue;
         }
-        repeat_move(Turn{.action = Action::M, .dir = Dir::R},
-                    coords[m].col - cur.col);
+        repeat_move(Turn{.action = Action::M, .dir = Dir::R}, col - cur.col);
         continue;
+      }
+    }
+
+    if (alter) {
+      --row_cnt[row];
+      if (m + 1 < M && row > 0 &&
+          std::accumulate(row_cnt.begin(), row_cnt.begin() + row, 0,
+                          std::plus<>{}) == 0 &&
+          can_keep_turning()) {
+        turns.push_back(Turn{.action = Action::A, .dir = Dir::U});
+        col_range[col].lo = row - 1;
+      }
+      if (m + 1 < M && row + 1 < N &&
+          std::accumulate(row_cnt.begin() + row + 1, row_cnt.end(), 0,
+                          std::plus<>{}) == 0 &&
+          can_keep_turning()) {
+        turns.push_back(Turn{.action = Action::A, .dir = Dir::D});
+        col_range[col].lo = row + 1;
+      }
+
+      --col_cnt[col];
+      if (m + 1 < M && col > 0 &&
+          std::accumulate(col_cnt.begin(), col_cnt.begin() + col, 0,
+                          std::plus<>{}) == 0 &&
+          can_keep_turning()) {
+        turns.push_back(Turn{.action = Action::A, .dir = Dir::L});
+        col_range[col].lo = col - 1;
+      }
+      if (m + 1 < M && col + 1 < N &&
+          std::accumulate(col_cnt.begin() + col + 1, col_cnt.end(), 0,
+                          std::plus<>{}) == 0 &&
+          can_keep_turning()) {
+        turns.push_back(Turn{.action = Action::A, .dir = Dir::R});
+        col_range[col].lo = col + 1;
       }
     }
   }
 
   assert(turns.size() <= MAX_TURNS);
-  std::cerr << "m<M=" << (m < M) << "\tm=" << m
-            << "\tM+2NM-T=" << M + 2 * N * M - static_cast<int>(turns.size())
-            << std::endl;
   return Solution{
       .score = m < M ? m : M + 2 * N * M - static_cast<int>(turns.size()),
       .turns = std::move(turns),
@@ -296,8 +340,11 @@ static auto Solve(Coords const& coords) -> Solution {
 namespace tb = tbrekalo;
 
 auto main(int, char**) -> int {
-  auto problem = tb::Load(std::cin);
-  auto solution = tb::Solve(problem);
+  auto coords = tb::Load(std::cin);
+  auto solution = tb::Solve(coords, false);
+  if (auto altered = tb::Solve(coords, true); altered.score > solution.score) {
+    solution = std::move(altered);
+  }
   std::cerr << "elapsed=" << tb::elapsed() << std::endl;
   tb::Print(std::cout, solution);
   return 0;
