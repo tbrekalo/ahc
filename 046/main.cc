@@ -108,8 +108,8 @@ static inline constexpr int N = 20;
 static inline constexpr int M = 40;
 
 struct Coord {
-  int r;
-  int c;
+  int row;
+  int col;
 
   friend constexpr auto operator+(Coord lhs, Coord rhs) noexcept -> Coord;
   friend constexpr auto operator-(Coord lhs, Coord rhs) noexcept -> Coord;
@@ -128,13 +128,13 @@ struct Coord {
 
 [[gnu::always_inline]] constexpr auto operator+(Coord lhs, Coord rhs) noexcept
     -> Coord {
-  Coord dst{.r = lhs.r + rhs.r, .c = lhs.c + rhs.c};
+  Coord dst{.row = lhs.row + rhs.row, .col = lhs.col + rhs.col};
   assert(InBounds(dst));
   return dst;
 }
 [[gnu::always_inline]] constexpr auto operator-(Coord lhs, Coord rhs) noexcept
     -> Coord {
-  Coord dst{.r = lhs.r - rhs.r, .c = lhs.c - rhs.c};
+  Coord dst{.row = lhs.row - rhs.row, .col = lhs.col - rhs.col};
   assert(InBounds(dst));
   return dst;
 }
@@ -147,7 +147,7 @@ using Grid = std::array<std::array<char, N>, N>;
                                                       Coord coord) noexcept
     -> bool {
   auto [r, c] = coord;
-  return InBounds(coord) && grid[coord.r][coord.c] == 0;
+  return InBounds(coord) && grid[coord.row][coord.col] == 0;
 }
 
 enum class Action : char { M, S, A };
@@ -187,7 +187,7 @@ static auto Load(std::istream& istrm) -> Coords {
   istrm >> _ >> _;
   dst.resize(M);
   for (int i = 0; i < M; ++i) {
-    istrm >> dst[i].r >> dst[i].c;
+    istrm >> dst[i].row >> dst[i].col;
   }
 
   return dst;
@@ -212,25 +212,25 @@ static auto Solve(Coords const& coords) -> std::vector<Turn> {
 
   for (int i = 1; i < M; ++i) {
     while (cur != coords[i]) {
-      if (cur.r < coords[i].r) {
+      if (cur.row < coords[i].row) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::D},
-                    coords[i].r - cur.r);
+                    coords[i].row - cur.row);
         continue;
       }
-      if (cur.r > coords[i].r) {
+      if (cur.row > coords[i].row) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::U},
-                    cur.r - coords[i].r);
+                    cur.row - coords[i].row);
         continue;
       }
 
-      if (cur.c > coords[i].c) {
+      if (cur.col > coords[i].col) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::L},
-                    cur.c - coords[i].c);
+                    cur.col - coords[i].col);
         continue;
       }
-      if (cur.c < coords[i].c) {
+      if (cur.col < coords[i].col) {
         repeat_move(Turn{.action = Action::M, .dir = Dir::R},
-                    coords[i].c - cur.c);
+                    coords[i].col - cur.col);
         continue;
       }
     }
