@@ -285,7 +285,17 @@ static auto Print(std::ostream& ostrm, Solution const& solution) -> void {
 static auto Solve(CoordsView coords, double p) -> Solution {
   Coord cur = coords[0];
   std::vector<Turn> turns;
-  auto can_keep_turning = [&turns] -> bool { return turns.size() < MAX_TURNS; };
+  auto can_keep_turning = [&turns] [[gnu::always_inline]] -> bool {
+    return turns.size() < MAX_TURNS;
+  };
+  auto try_turn = [&turns, &can_keep_turning](Turn turn) -> bool {
+    if (can_keep_turning()) {
+      turns.push_back(turn);
+      return true;
+    }
+    return false;
+  };
+
   Grid grid = EmptyGrid();
   for (int i = 1; i < coords.size(); ++i) {
     grid[coords[i].row][coords[i].col] = Cell::TARGET;
@@ -297,18 +307,17 @@ static auto Solve(CoordsView coords, double p) -> Solution {
     cell = cell == Cell::EMPTY ? Cell::BLOCK : Cell::EMPTY;
   };
 
-  auto try_block = [p, &grid, alter_block](Coord base,
-                                           Dir skip_dir) -> std::vector<Turn> {
+  auto try_block = [p, &try_turn, &grid, alter_block](
+                       Coord base, Dir banned_dir) -> std::vector<Turn> {
     std::vector<Turn> dst;
     std::bernoulli_distribution distr(p);
     for (auto dir = Dir::U; dir < Dir::R; ++dir) {
-      if (dir == skip_dir) {
+      if (dir == banned_dir) {
         continue;
       }
       if (auto target = base + DirToDif(dir);
           InBounds(target) && grid[target.row][target.col] == Cell::EMPTY &&
-          distr(RNG)) {
-        dst.push_back(Turn{.action = Action::A, .dir = dir});
+          distr(RNG) && try_turn(Turn{.action = Action::A, .dir = dir})) {
         alter_block(target);
       }
     }
@@ -321,23 +330,36 @@ static auto Solve(CoordsView coords, double p) -> Solution {
     return pos;
   };
 
-  auto repeated_move = [&cur, &turns](Coord target) -> void {
-    auto dir = FromToDir(cur, target);
+  auto repeated_move = [&try_turn, &grid, &alter_block, &try_block](
+                           Coord cur, Coord to) -> Coord {
+    auto dir = FromToDir(cur, to);
     if (!dir) {
-      return;
+      return cur;
     }
 
-    int dif = FromToDif(cur, target);
+    int dif = FromToDif(cur, to);
     for (int i = 0; i < dif; ++i) {
-      turns.push_back(Turn{.action = Action::M, .dir = *dir});
-      cur = cur + DirToDif(*dir);
+      try_block(cur, *dir);
+      auto nxt = cur + DirToDif(*dir);
+      if (grid[nxt.row][nxt.col] == Cell::BLOCK) {
+        if (!try_turn(Turn{.action = Action::A, .dir = *dir})) {
+          break;
+        }
+        alter_block(nxt);
+      }
+      if (!try_turn(Turn{.action = Action::M, .dir = *dir})) {
+        break;
+      }
+      cur = nxt;
     }
+
+    return cur;
   };
 
   int m = 1;
   for (; m < M && can_keep_turning(); ++m) {
     while (cur != coords[m] && can_keep_turning()) {
-      repeated_move(coords[m]);
+      cur = repeated_move(cur, coords[m]);
     }
   }
 
