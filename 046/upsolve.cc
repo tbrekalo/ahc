@@ -16,7 +16,7 @@
 
 namespace tbrekalo {
 
-static constexpr auto MAX_RUNTIME = std::chrono::milliseconds(10);
+static constexpr auto MAX_RUNTIME = std::chrono::milliseconds(1'800);
 static const auto INIT_TIME = std::chrono::system_clock::now();
 
 static auto elapsed() -> std::chrono::milliseconds {
@@ -128,10 +128,14 @@ static inline constexpr int N = 20;
 static inline constexpr int M = 40;
 static inline constexpr int MAX_TURNS = 2 * N * M;
 
-static constexpr auto BEGIN_TEMP = 2 * N * M + M;
-static constexpr auto END_TEMP = M;
+static constexpr auto MAX_SCORE = 2 * N * M + M;
+static constexpr auto BEGIN_TEMP = MAX_SCORE;
+static constexpr auto END_TEMP = N;
 
-static constexpr auto COOL = 1. * END_TEMP / BEGIN_TEMP;
+static auto temperature() -> double {
+  return BEGIN_TEMP *
+         std::pow(1. * END_TEMP / BEGIN_TEMP, 1. * elapsed() / MAX_RUNTIME);
+}
 
 struct Coord {
   int row;
@@ -269,7 +273,6 @@ using GridT = std::array<std::array<T, N>, N>;
 
 using GridCell = GridT<Cell>;
 using GridProb = GridT<double>;
-using GridValues = GridT<double>;
 
 template <class T>
 static constexpr auto FillGrid(T value) -> GridT<T> {
@@ -294,15 +297,14 @@ static constexpr auto GenerateGrid(Fn&& fn) -> GridT<std::invoke_result_t<Fn>> {
   return dst;
 }
 
-static auto FuzzCounts(GridValues counts, double stdev) -> GridValues {
-  GridValues dst;
-  std::normal_distribution<> normal(0, stdev);
+static auto FuzzProbs(GridProb grid) -> GridProb {
+  std::normal_distribution<> normal(0.1, 0.0025);
   for (int r = 0; r < N; ++r) {
     for (int c = 0; c < N; ++c) {
-      dst[r][c] = counts[r][c] + normal(RNG);
+      grid[r][c] = std::clamp(grid[r][c] + normal(RNG), 0.0025, 0.95);
     }
   }
-  return dst;
+  return grid;
 }
 
 static constexpr auto CreateProbGrid(float value) -> GridProb {
@@ -313,28 +315,10 @@ static constexpr auto CreateProbGrid(float value) -> GridProb {
   return dst;
 };
 
-static constexpr auto SoftMaxCoutns(GridValues grid) -> GridProb {
-  auto dst = CreateProbGrid(0.);
-  auto sum = 0.;
-  for (auto const& row : grid) {
-    for (auto cell : row) {
-      sum += std::exp(cell);
-    }
-  }
-
-  for (int r = 0; r < grid.size(); ++r) {
-    for (int c = 0; c < grid[r].size(); ++c) {
-      dst[r][c] = std::exp(grid[r][c]) / sum;
-    }
-  }
-
-  return dst;
-}
-
 struct Solution {
   int score;
   std::vector<Turn> turns;
-  GridValues counts;
+  GridProb block_probs;
 };
 
 static auto Load(std::istream& istrm) -> Coords {
@@ -356,7 +340,7 @@ static auto Print(std::ostream& ostrm, Solution const& solution) -> void {
   std::flush(ostrm);
 }
 
-static auto Solve(CoordsView coords, GridValues counts) -> Solution {
+static auto Solve(CoordsView coords, GridProb p) -> Solution {
   Coord cur = coords[0];
   std::vector<Turn> turns;
   auto can_keep_turning = [&turns] [[gnu::always_inline]] -> bool {
@@ -370,7 +354,7 @@ static auto Solve(CoordsView coords, GridValues counts) -> Solution {
     return false;
   };
 
-  GridProb p = SoftMaxCoutns(counts);
+  GridProb adjusted_p = FillGrid(0.);
   GridCell grid = FillGrid(Cell::EMPTY);
   for (int i = 1; i < coords.size(); ++i) {
     grid[coords[i].row][coords[i].col] = Cell::TARGET;
@@ -418,7 +402,7 @@ static auto Solve(CoordsView coords, GridValues counts) -> Solution {
     return block_to_dist;
   };
 
-  auto dir_move = [&counts, &try_turn, &grid, &alter_block, &try_block,
+  auto dir_move = [&adjusted_p, &try_turn, &grid, &alter_block, &try_block,
                    &find_next_to_block,
                    &calc_slide_cost](Coord cur, Coord to) -> Coord {
     auto dir = FromToDir(cur, to);
@@ -431,7 +415,7 @@ static auto Solve(CoordsView coords, GridValues counts) -> Solution {
     int slide_dif = calc_slide_cost(cur, to, next_to_block);
     if (slide_dif < move_dif) {
       if (InBounds(block)) {
-        counts[block.row][block.col]++;
+        adjusted_p[block.row][block.col] = 0.95;
       }
       if (try_turn(Turn{.action = Action::S, .dir = *dir})) {
         cur = next_to_block;
@@ -477,7 +461,7 @@ static auto Solve(CoordsView coords, GridValues counts) -> Solution {
   return Solution{
       .score = m < M ? m : M + 2 * N * M - static_cast<int>(turns.size()),
       .turns = std::move(turns),
-      .counts = counts,
+      .block_probs = adjusted_p,
   };
 }
 
@@ -486,21 +470,31 @@ static auto Solve(CoordsView coords, GridValues counts) -> Solution {
 namespace tb = tbrekalo;
 
 auto main(int, char**) -> int {
-  auto coords = tb::Load(std::cin);
-  auto best_solution = tb::Solve(coords, tb::FillGrid(1.));
-  for (auto solution = best_solution; tb::elapsed() < tb::MAX_RUNTIME;) {
-    auto candidate = tb::Solve(coords, tb::FuzzCounts(solution.counts, 1));
-    if (candidate.score > best_solution.score) {
-      best_solution = solution;
-    }
-    std::cerr << "elapsed=" << tb::elapsed()
-              << " best-score=" << best_solution.score
-              << " candidate-score=" << candidate.score << std::endl;
+  using namespace std::literals;
+  std::uniform_real_distribution<> p(0, 1);
+  auto last_report = tb::elapsed();
 
-    if (candidate.score > solution.score) {
-      solution = std::move(candidate);
+  auto coords = tb::Load(std::cin);
+  auto best = tb::Solve(coords, tb::FillGrid(0.001));
+  for (auto current = best; tb::elapsed() < tb::MAX_RUNTIME;) {
+    auto candidate = tb::Solve(coords, tb::FuzzProbs(current.block_probs));
+    if (auto elapsed = tb::elapsed(); elapsed - last_report > 100ms) {
+      std::cerr << "elapsed=" << elapsed << " best-score=" << best.score
+                << " current-score" << current.score
+                << " candidate-score=" << candidate.score << std::endl;
+      last_report = elapsed;
+    }
+
+    auto acc_p = std::exp(static_cast<double>(candidate.score - current.score) /
+                          tb::temperature());
+    if (candidate.score > current.score || p(tb::RNG) < acc_p) {
+      current = std::move(candidate);
+    }
+
+    if (current.score > best.score) {
+      best = current;
     }
   }
-  tb::Print(std::cout, best_solution);
+  tb::Print(std::cout, best);
   return 0;
 }
