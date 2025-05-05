@@ -2,6 +2,7 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <compare>
 #include <iostream>
 #include <limits>
@@ -9,12 +10,13 @@
 #include <ostream>
 #include <random>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace tbrekalo {
 
-static constexpr auto MAX_RUNTIME = std::chrono::milliseconds(1'800);
+static constexpr auto MAX_RUNTIME = std::chrono::milliseconds(10);
 static const auto INIT_TIME = std::chrono::system_clock::now();
 
 static auto elapsed() -> std::chrono::milliseconds {
@@ -126,6 +128,11 @@ static inline constexpr int N = 20;
 static inline constexpr int M = 40;
 static inline constexpr int MAX_TURNS = 2 * N * M;
 
+static constexpr auto BEGIN_TEMP = 2 * N * M + M;
+static constexpr auto END_TEMP = M;
+
+static constexpr auto COOL = 1. * END_TEMP / BEGIN_TEMP;
+
 struct Coord {
   int row;
   int col;
@@ -220,6 +227,16 @@ static auto FromToDir(Coord from, Coord to) noexcept -> std::optional<Dir> {
   return std::nullopt;
 }
 
+[[gnu::always_inline]] inline constexpr auto RowDif(Coord from,
+                                                    Coord to) noexcept -> int {
+  return from.row < to.row ? to.row - from.row : from.row - to.row;
+}
+
+[[gnu::always_inline]] inline constexpr auto ColDif(Coord from,
+                                                    Coord to) noexcept -> int {
+  return from.col < to.col ? to.col - from.col : from.col - to.col;
+}
+
 static auto FromToDif(Coord from, Coord to) noexcept -> int {
   auto opt_dir = FromToDir(from, to);
   if (!opt_dir) {
@@ -245,23 +262,80 @@ static auto FromToDif(Coord from, Coord to) noexcept -> int {
   return ret;
 }
 
-struct Solution {
-  int score;
-  std::vector<Turn> turns;
-};
-
 enum class Cell : char { EMPTY, TARGET, BLOCK };
 
-using Grid = std::array<std::array<Cell, N>, N>;
+template <class T>
+using GridT = std::array<std::array<T, N>, N>;
 
-static constexpr auto EmptyGrid() -> Grid {
-  Grid dst;
-  std::ranges::for_each(dst, [](Grid::reference row) -> void {
-    std::ranges::fill(row, Cell::EMPTY);
+using GridCell = GridT<Cell>;
+using GridProb = GridT<double>;
+using GridValues = GridT<double>;
+
+template <class T>
+static constexpr auto FillGrid(T value) -> GridT<T> {
+  GridT<T> dst;
+  std::ranges::for_each(dst, [value](GridT<T>::reference row) -> void {
+    std::ranges::fill(row, value);
   });
 
   return dst;
 }
+
+template <class Fn>
+static constexpr auto GenerateGrid(Fn&& fn) -> GridT<std::invoke_result_t<Fn>> {
+  using Grid = GridT<std::invoke_result_t<Fn>>;
+
+  Grid dst;
+  std::ranges::for_each(
+      dst, [fn = std::forward<Fn>(fn)](Grid::reference row) -> void {
+        std::ranges::generate(row, fn);
+      });
+
+  return dst;
+}
+
+static auto FuzzCounts(GridValues counts, double stdev) -> GridValues {
+  GridValues dst;
+  std::normal_distribution<> normal(0, stdev);
+  for (int r = 0; r < N; ++r) {
+    for (int c = 0; c < N; ++c) {
+      dst[r][c] = counts[r][c] + normal(RNG);
+    }
+  }
+  return dst;
+}
+
+static constexpr auto CreateProbGrid(float value) -> GridProb {
+  GridProb dst;
+  std::ranges::for_each(dst, [value](GridProb::reference row) -> void {
+    std::ranges::fill(row, value);
+  });
+  return dst;
+};
+
+static constexpr auto SoftMaxCoutns(GridValues grid) -> GridProb {
+  auto dst = CreateProbGrid(0.);
+  auto sum = 0.;
+  for (auto const& row : grid) {
+    for (auto cell : row) {
+      sum += std::exp(cell);
+    }
+  }
+
+  for (int r = 0; r < grid.size(); ++r) {
+    for (int c = 0; c < grid[r].size(); ++c) {
+      dst[r][c] = std::exp(grid[r][c]) / sum;
+    }
+  }
+
+  return dst;
+}
+
+struct Solution {
+  int score;
+  std::vector<Turn> turns;
+  GridValues counts;
+};
 
 static auto Load(std::istream& istrm) -> Coords {
   int _;
@@ -282,7 +356,7 @@ static auto Print(std::ostream& ostrm, Solution const& solution) -> void {
   std::flush(ostrm);
 }
 
-static auto Solve(CoordsView coords, double p) -> Solution {
+static auto Solve(CoordsView coords, GridValues counts) -> Solution {
   Coord cur = coords[0];
   std::vector<Turn> turns;
   auto can_keep_turning = [&turns] [[gnu::always_inline]] -> bool {
@@ -296,7 +370,8 @@ static auto Solve(CoordsView coords, double p) -> Solution {
     return false;
   };
 
-  Grid grid = EmptyGrid();
+  GridProb p = SoftMaxCoutns(counts);
+  GridCell grid = FillGrid(Cell::EMPTY);
   for (int i = 1; i < coords.size(); ++i) {
     grid[coords[i].row][coords[i].col] = Cell::TARGET;
   }
@@ -307,39 +382,74 @@ static auto Solve(CoordsView coords, double p) -> Solution {
     cell = cell == Cell::EMPTY ? Cell::BLOCK : Cell::EMPTY;
   };
 
-  auto try_block = [p, &try_turn, &grid, alter_block](
+  auto try_block = [p, &grid, alter_block](
                        Coord base, Dir banned_dir) -> std::vector<Turn> {
     std::vector<Turn> dst;
-    std::bernoulli_distribution distr(p);
+    std::uniform_real_distribution<float> distr(0, 1);
     for (auto dir = Dir::U; dir < Dir::R; ++dir) {
       if (dir == banned_dir) {
         continue;
       }
       if (auto target = base + DirToDif(dir);
           InBounds(target) && grid[target.row][target.col] == Cell::EMPTY &&
-          distr(RNG) && try_turn(Turn{.action = Action::A, .dir = dir})) {
+          distr(RNG) < p[target.row][target.col]) {
+        dst.push_back(Turn{.action = Action::A, .dir = dir});
         alter_block(target);
       }
     }
     return dst;
   };
 
-  auto find_block = [&grid](Coord pos, Dir dir) -> Coord {
-    for (; InBounds(pos) && grid[pos.row][pos.col] != Cell::BLOCK;
-         pos = pos + DirToDif(dir));
-    return pos;
+  auto find_next_to_block = [&grid](Coord pos,
+                                    Dir dir) -> std::pair<Coord, Coord> {
+    auto nxt = pos + DirToDif(dir);
+    while (true) {
+      nxt = pos + DirToDif(dir);
+      if (!InBounds(nxt) || grid[nxt.row][nxt.col] == Cell::BLOCK) {
+        break;
+      }
+      pos = nxt;
+    }
+    return {pos, nxt};
   };
 
-  auto repeated_move = [&try_turn, &grid, &alter_block, &try_block](
-                           Coord cur, Coord to) -> Coord {
+  auto calc_slide_cost = [](Coord from, Coord to, Coord block) -> int {
+    auto block_to_dist = FromToDif(block, to);
+    return block_to_dist;
+  };
+
+  auto dir_move = [&counts, &try_turn, &grid, &alter_block, &try_block,
+                   &find_next_to_block,
+                   &calc_slide_cost](Coord cur, Coord to) -> Coord {
     auto dir = FromToDir(cur, to);
     if (!dir) {
       return cur;
     }
 
-    int dif = FromToDif(cur, to);
-    for (int i = 0; i < dif; ++i) {
-      try_block(cur, *dir);
+    auto move_dif = FromToDif(cur, to);
+    auto [next_to_block, block] = find_next_to_block(cur, *dir);
+    int slide_dif = calc_slide_cost(cur, to, next_to_block);
+    if (slide_dif < move_dif) {
+      if (InBounds(block)) {
+        counts[block.row][block.col]++;
+      }
+      if (try_turn(Turn{.action = Action::S, .dir = *dir})) {
+        cur = next_to_block;
+        move_dif = FromToDif(cur, to);
+        auto opt_dir = FromToDir(cur, to);
+        if (!opt_dir) {
+          return cur;
+        }
+        dir = *opt_dir;
+      }
+    }
+
+    for (int i = 0; i < move_dif; ++i) {
+      for (auto block_turn : try_block(cur, *dir)) {
+        if (!try_turn(block_turn)) {
+          break;
+        }
+      }
       auto nxt = cur + DirToDif(*dir);
       if (grid[nxt.row][nxt.col] == Cell::BLOCK) {
         if (!try_turn(Turn{.action = Action::A, .dir = *dir})) {
@@ -359,7 +469,7 @@ static auto Solve(CoordsView coords, double p) -> Solution {
   int m = 1;
   for (; m < M && can_keep_turning(); ++m) {
     while (cur != coords[m] && can_keep_turning()) {
-      cur = repeated_move(cur, coords[m]);
+      cur = dir_move(cur, coords[m]);
     }
   }
 
@@ -367,6 +477,7 @@ static auto Solve(CoordsView coords, double p) -> Solution {
   return Solution{
       .score = m < M ? m : M + 2 * N * M - static_cast<int>(turns.size()),
       .turns = std::move(turns),
+      .counts = counts,
   };
 }
 
@@ -376,8 +487,20 @@ namespace tb = tbrekalo;
 
 auto main(int, char**) -> int {
   auto coords = tb::Load(std::cin);
-  auto solution = tb::Solve(coords, 0.1);
-  std::cerr << "elapsed=" << tb::elapsed() << std::endl;
-  tb::Print(std::cout, solution);
+  auto best_solution = tb::Solve(coords, tb::FillGrid(1.));
+  for (auto solution = best_solution; tb::elapsed() < tb::MAX_RUNTIME;) {
+    auto candidate = tb::Solve(coords, tb::FuzzCounts(solution.counts, 1));
+    if (candidate.score > best_solution.score) {
+      best_solution = solution;
+    }
+    std::cerr << "elapsed=" << tb::elapsed()
+              << " best-score=" << best_solution.score
+              << " candidate-score=" << candidate.score << std::endl;
+
+    if (candidate.score > solution.score) {
+      solution = std::move(candidate);
+    }
+  }
+  tb::Print(std::cout, best_solution);
   return 0;
 }
