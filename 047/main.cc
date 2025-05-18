@@ -295,6 +295,8 @@ auto EvaluateModel(Model model, std::span<Word const> words, int n_samples) {
 }
 
 auto CreateK3MerUniformModel(std::span<Word const> words, int k) -> Model {
+  static std::bernoulli_distribution p(0.66);
+
   assert(k <= words.size());
   Model model = CreateEmptyModel();
   std::array<std::array<std::uint64_t, M>, M> score;
@@ -305,8 +307,13 @@ auto CreateK3MerUniformModel(std::span<Word const> words, int k) -> Model {
   for (int i = 0; i < k; ++i) {
     auto const& [value, preference] = words[i];
     for (int j = 2; j < value.size(); ++j) {
-      score[value[j - 2] - 'a'][value[j - 1] - 'a'] += preference;
-      score[ALPHA + value[j - 1] - 'a'][ALPHA + value[j] - 'a'] += preference;
+      auto offset_a = ALPHA * p(RNG);
+      auto offset_b = ALPHA * p(RNG);
+
+      score[offset_b + value[j - 2] - 'a'][offset_a + value[j - 1] - 'a'] +=
+          preference;
+      score[offset_a + value[j - 1] - 'a'][offset_b + value[j] - 'a'] +=
+          preference;
     }
   }
   for (int i = 0; i < M; ++i) {
