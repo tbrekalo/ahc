@@ -2,13 +2,12 @@
 #include <array>
 #include <cassert>
 #include <chrono>
-#include <compare>
+#include <cmath>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <numeric>
-#include <ostream>
-#include <random>
-#include <utility>
+#include <span>
 #include <vector>
 
 namespace tbrekalo {
@@ -119,8 +118,113 @@ static Xoshiro256pp RNG{{42, 9, 7, 1998}};
 
 }  // namespace tbrekalo
 
-namespace tbrekalo{}
+namespace tbrekalo {
+
+static constexpr auto N = 36;
+static constexpr auto M = 12;
+static constexpr auto L = 1'000'000;
+static constexpr auto ALPHA = 6;
+
+struct Word {
+  std::string value;
+  int preference;
+};
+
+using TransProb = std::array<char, M>;
+
+struct Row {
+  char label;
+  TransProb value;
+};
+
+using Model = std::array<Row, M>;
+
+auto Load(std::istream& istrm) -> std::vector<Word> {
+  int _;
+  std::vector<Word> dst(N);
+  istrm >> _ >> _ >> _;
+  for (int i = 0; i < N; ++i) {
+    istrm >> dst[i].value >> dst[i].preference;
+  }
+
+  std::ranges::sort(dst, std::greater<>{}, &Word::preference);
+  return dst;
+}
+
+auto Print(std::ostream& ostrm, Model model) -> void {
+  for (auto [label, value] : model) {
+    assert(std::accumulate(value.begin(), value.end(), 0) == 100);
+    ostrm << label << ' ';
+    for (auto it : value) {
+      ostrm << static_cast<int>(it) << ' ';
+    }
+    ostrm << '\n';
+  }
+  std::flush(ostrm);
+}
+
+auto GenerateRandomTrans() -> TransProb {
+  TransProb dst;
+  std::ranges::fill(dst, 0);
+
+  for (int i = 100, j = 0; i > 0; j = (j + 1) % M) {
+    auto x = std::uniform_int_distribution<char>(0, i)(RNG);
+    dst[j] += x;
+    i -= x;
+  }
+
+  return dst;
+}
+
+auto GenerateInitial() -> Model {
+  Model dst;
+  for (int i = 0; i < M; ++i) {
+    dst[i].label = 'a' + (i % ALPHA);
+    dst[i].value = GenerateRandomTrans();
+  }
+
+  return dst;
+}
+
+auto TrainModel(Model model, std::span<Word const> words, int k) -> Model {
+  std::array<std::array<double, ALPHA>, ALPHA> freqs;
+  for (auto& row : freqs) {
+    std::ranges::fill(row, 0);
+  }
+
+  for (int i = 0; i < k; ++i) {
+    for (int j = 1; j < words[i].value.size(); ++j) {
+      freqs[words[i].value[j - 1] - 'a'][words[i].value[j] - 'a'] += 1;
+    }
+  }
+
+  for (int i = 0; i < ALPHA; ++i) {
+    int prob_sum = 0;
+    std::ranges::fill(model[i].value, 0);
+    auto freq_sum = std::accumulate(freqs[i].begin(), freqs[i].end(), 0);
+    for (int j = 0; j < ALPHA; ++j) {
+      int value = std::floor(100 * freqs[i][j] / freq_sum);
+      assert(prob_sum + value <= 100);
+
+      model[i].value[j] = value;
+      prob_sum += value;
+    }
+
+    for (int j = 0; prob_sum < 100; j = (j + 1) % ALPHA, ++prob_sum) {
+      ++model[i].value[j];
+    }
+  }
+
+  return model;
+}
+
+}  // namespace tbrekalo
 
 namespace tb = tbrekalo;
 
-auto main(int, char**) -> int { return 0; }
+auto main(int, char**) -> int {
+  auto words = tb::Load(std::cin);
+  tb::Print(std::cout, TrainModel(tb::GenerateInitial(), words, 3));
+  std::cerr << "elapsed=" << tb::elapsed() << std::endl;
+  return 0;
+}
