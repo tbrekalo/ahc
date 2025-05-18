@@ -6,8 +6,12 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <numeric>
+#include <random>
+#include <ranges>
 #include <span>
+#include <unordered_set>
 #include <vector>
 
 namespace tbrekalo {
@@ -123,6 +127,7 @@ namespace tbrekalo {
 static constexpr auto N = 36;
 static constexpr auto M = 12;
 static constexpr auto L = 1'000'000;
+static constexpr auto S = 12;
 static constexpr auto ALPHA = 6;
 
 struct Word {
@@ -138,6 +143,79 @@ struct Row {
 };
 
 using Model = std::array<Row, M>;
+
+struct K3Mer {
+  char a;
+  char b;
+  char c;
+
+  friend inline constexpr auto operator<=>(K3Mer lhs,
+                                           K3Mer rhs) noexcept = default;
+};
+
+struct K3MerHash {
+  inline constexpr auto operator()(K3Mer kmer) const noexcept -> std::size_t {
+    std::size_t hash = 5381;
+    auto arr = std::bit_cast<std::array<char, 3>>(kmer);
+    for (auto it : arr) {
+      hash = ((hash << 5) + hash) + it;
+    }
+
+    return hash;
+  }
+};
+
+class Trie {
+  struct Node {
+    Node(char value) : value(value) { std::ranges::fill(children, nullptr); };
+
+    char value;
+    std::array<std::unique_ptr<Node>, ALPHA + 1> children;
+  };
+
+  struct SearchState {
+    std::string value;
+    Node* node;
+  };
+
+  std::shared_ptr<Node> root_;
+  std::unordered_set<std::string> words_;
+  std::vector<SearchState> search_state_;
+
+  auto embed(std::string_view word) -> void {
+    auto node = root_.get();
+    for (auto c :
+         std::views::transform(word, [](char c) -> int { return c - 'a'; })) {
+      if (node->children[c] == nullptr) {
+        node->children[c] = std::make_unique<Node>(c);
+      }
+      node = node->children[c].get();
+    }
+
+    if (node->value != '$') {
+      node->children[ALPHA] = std::make_unique<Node>('$');
+    }
+  }
+
+ public:
+  Trie(std::span<Word> words) : root_(std::make_shared<Node>('$')) {
+    search_state_.push_back({"", root_.get()});
+    for (auto const& [word, _] : words) {
+      words_.insert(word);
+      embed(word);
+    }
+  }
+
+  auto search(char c) {
+    std::vector<SearchState> next_state;
+    for (auto [str, node] : search_state_) {
+      if (node->children[c] != nullptr) {
+      }
+    }
+  }
+
+  auto clear() -> void { search_state_.clear(); }
+};
 
 auto Load(std::istream& istrm) -> std::vector<Word> {
   int _;
@@ -195,32 +273,53 @@ auto GenerateInitial() -> Model {
   return dst;
 }
 
-auto CreateK3MerModel(std::span<Word const> words, int k) -> Model {
+auto GenerateSequence(Model model) {
+  std::string word;
+  std::vector<std::discrete_distribution<int>> distr{M};
+  for (int i = 0; i < M; ++i) {
+    distr[i] = std::discrete_distribution<int>(model[i].value.begin(),
+                                               model[i].value.end());
+  }
+
+  for (auto s = 0, i = 0; i < L; ++i) {
+    word.push_back(model[s].label);
+    s = distr[s](RNG);
+  }
+
+  return word;
+}
+
+auto EvaluateModel(Model model, std::span<Word const> words, int n_samples) {
+  for (auto [value, preference] : words) {
+  }
+}
+
+auto CreateK3MerUniformModel(std::span<Word const> words, int k) -> Model {
   assert(k <= words.size());
   Model model = CreateEmptyModel();
-  std::array<std::array<std::uint64_t, M>, M> freqs;
-  for (auto& row : freqs) {
+  std::array<std::array<std::uint64_t, M>, M> score;
+  for (auto& row : score) {
     std::ranges::fill(row, 0);
   }
 
   for (int i = 0; i < k; ++i) {
     auto const& [value, preference] = words[i];
     for (int j = 2; j < value.size(); ++j) {
-      freqs[value[j - 2] - 'a'][value[j - 1] - 'a'] += preference;
-      freqs[ALPHA + value[j - 1] - 'a'][ALPHA + value[j] - 'a'] += preference;
+      score[value[j - 2] - 'a'][value[j - 1] - 'a'] += preference;
+      score[ALPHA + value[j - 1] - 'a'][ALPHA + value[j] - 'a'] += preference;
     }
   }
   for (int i = 0; i < M; ++i) {
     int prob_sum = 0;
     std::ranges::fill(model[i].value, 0);
-    auto freq_sum = std::accumulate(freqs[i].begin(), freqs[i].end(), 0);
+    auto freq_sum = std::accumulate(score[i].begin(), score[i].end(), 0);
     if (freq_sum == 0) {
       model[i].value = GenerateRandomTrans();
       continue;
     }
 
     for (int j = 0; j < M; ++j) {
-      int value = 100 * freqs[i][j] / freq_sum;
+      int value = 100 * score[i][j] / freq_sum;
       assert(prob_sum + value <= 100);
 
       model[i].value[j] = value;
@@ -241,7 +340,12 @@ namespace tb = tbrekalo;
 
 auto main(int, char**) -> int {
   auto words = tb::Load(std::cin);
-  tb::Print(std::cout, tb::CreateK3MerModel(words, tb::N));
+  auto trie = tb::Trie(words);
+
+  auto model = tb::CreateK3MerUniformModel(words, tb::N);
+  auto sequence = tb::GenerateSequence(model);
+
+  tb::Print(std::cout, model);
   std::cerr << "elapsed=" << tb::elapsed() << std::endl;
   return 0;
 }
