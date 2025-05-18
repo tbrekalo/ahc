@@ -176,41 +176,58 @@ auto GenerateRandomTrans() -> TransProb {
   return dst;
 }
 
-auto GenerateInitial() -> Model {
+auto CreateEmptyModel() -> Model {
   Model dst;
   for (int i = 0; i < M; ++i) {
     dst[i].label = 'a' + (i % ALPHA);
-    dst[i].value = GenerateRandomTrans();
+    std::ranges::fill(dst[i].value, 0);
   }
 
   return dst;
 }
 
-auto TrainModel(Model model, std::span<Word const> words, int k) -> Model {
-  std::array<std::array<double, ALPHA>, ALPHA> freqs;
+auto GenerateInitial() -> Model {
+  Model dst = CreateEmptyModel();
+  for (auto& row : dst) {
+    row.value = GenerateRandomTrans();
+  }
+
+  return dst;
+}
+
+auto CreateK3MerModel(std::span<Word const> words, int k) -> Model {
+  assert(k <= words.size());
+  Model model = CreateEmptyModel();
+  std::array<std::array<std::uint64_t, M>, M> freqs;
   for (auto& row : freqs) {
     std::ranges::fill(row, 0);
   }
 
   for (int i = 0; i < k; ++i) {
-    for (int j = 1; j < words[i].value.size(); ++j) {
-      freqs[words[i].value[j - 1] - 'a'][words[i].value[j] - 'a'] += 1;
+    auto const& [value, preference] = words[i];
+    for (int j = 2; j < value.size(); ++j) {
+      freqs[value[j - 2] - 'a'][value[j - 1] - 'a'] += preference;
+      freqs[ALPHA + value[j - 1] - 'a'][ALPHA + value[j] - 'a'] += preference;
     }
   }
-
-  for (int i = 0; i < ALPHA; ++i) {
+  for (int i = 0; i < M; ++i) {
     int prob_sum = 0;
     std::ranges::fill(model[i].value, 0);
     auto freq_sum = std::accumulate(freqs[i].begin(), freqs[i].end(), 0);
-    for (int j = 0; j < ALPHA; ++j) {
-      int value = std::floor(100 * freqs[i][j] / freq_sum);
+    if (freq_sum == 0) {
+      model[i].value = GenerateRandomTrans();
+      continue;
+    }
+
+    for (int j = 0; j < M; ++j) {
+      int value = 100 * freqs[i][j] / freq_sum;
       assert(prob_sum + value <= 100);
 
       model[i].value[j] = value;
       prob_sum += value;
     }
 
-    for (int j = 0; prob_sum < 100; j = (j + 1) % ALPHA, ++prob_sum) {
+    for (int j = 0; prob_sum < 100; j = (j + 1) % M, ++prob_sum) {
       ++model[i].value[j];
     }
   }
@@ -224,7 +241,7 @@ namespace tb = tbrekalo;
 
 auto main(int, char**) -> int {
   auto words = tb::Load(std::cin);
-  tb::Print(std::cout, TrainModel(tb::GenerateInitial(), words, 3));
+  tb::Print(std::cout, tb::CreateK3MerModel(words, tb::N));
   std::cerr << "elapsed=" << tb::elapsed() << std::endl;
   return 0;
 }
